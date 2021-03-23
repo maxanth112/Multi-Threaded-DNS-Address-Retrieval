@@ -10,6 +10,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
+#include <ctype.h>
+#include <semaphore.h>
+#include <errno.h>
 
 #define ARRAY_SIZE 10
 #define MAX_INPUT_FILES 100
