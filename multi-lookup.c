@@ -23,7 +23,7 @@ typedef struct {
 
 
 int check_args(int argc, int req_n, int res_n, char* req_log, char* res_log);
-void* requester(bbuffer *buf);
+void* requester(void *buf);
 
 
 int main(int argc, char **argv) {
@@ -46,10 +46,12 @@ int main(int argc, char **argv) {
     
     buf.curr_bcount = 0;
     sem_init(&buf.sem_ifile, 0, 1);
+
+    void* bbuff = &buf;
     
     pthread_t req_thread[req_num];
     for (int i = 0; i < req_num; i++) {
-        if (pthread_create(&req_thread[i], NULL, requester, &buf) != 0) {
+        if (pthread_create(&req_thread[i], NULL, requester, &bbuff) != 0) {
             printf("failed to create the %d'th thread", i);
         }
     }
@@ -64,27 +66,28 @@ int main(int argc, char **argv) {
 }
 
 
-void* requester(bbuffer *buf) {
+void* requester(void *buf) {
 
     int ifiles_serviced = 0;
     int got_file = 0;
+    bbuffer* buff = (bbuffer*) buf;
 
     while (1) {
         
         char curr_input_ips[MAX_INPUT_FILES][MAX_NAME_LENGTH];
 
         /* wait on other resolver threads before grabbing new input file */
-        sem_wait(&buf->sem_ifile); 
-        FILE* input_file = fopen(buf->ifiles[buf->curr_ifile], "r");
+        sem_wait(&buff->sem_ifile); 
+        FILE* input_file = fopen(buff->ifiles[buff->curr_ifile], "r");
         
         if (input_file == NULL) {
-            printf("Unable to open the file: %s\n", buf->ifiles[buf->curr_ifile]);
+            printf("Unable to open the file: %s\n", buff->ifiles[buff->curr_ifile]);
             exit(1);
         } 
         else {
             
-            printf("Thread %d grabbed the file: %s\n", buf->ifiles[buf->curr_ifile]);
-            buf->curr_ifile++;
+            printf("Thread %d grabbed the file: %s\n", 1, buff->ifiles[buff->curr_ifile]);
+            buff->curr_ifile++;
             ifiles_serviced++;
             got_file = 1;
             
@@ -95,17 +98,17 @@ void* requester(bbuffer *buf) {
             }
         }
 
-        sem_post(&buf->sem_ifile);
+        sem_post(&buff->sem_ifile);
 
 
 
         
         
 
-        if (buf->curr_ifile == buf->ifiles_length) break;
+        if (buff->curr_ifile == buff->ifiles_length) break;
     }
 
-    printf("thread %s serviced %d files", ifiles_serviced);
+    printf("thread %s serviced %d files", "hey", ifiles_serviced);
     return NULL;
 }
 
