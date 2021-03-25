@@ -11,8 +11,8 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
-#include <ctype.h>
 #include <semaphore.h>
+#include <ctype.h>
 #include <errno.h>
 
 #define ARRAY_SIZE 10
