@@ -9,13 +9,15 @@
 
 typedef struct {
     char** buffer;
-    char** input_files;
-    
-    int next_input_file;
-    int next_ip_address;
-    int buff_count;
+    char** ifiles;
 
-    sem_t new_input_file;
+    int curr_ifile;
+    int ifiles_length;
+    
+    int next_ip_address;
+    int curr_bcount;
+
+    sem_t sem_ifile;
     sem_t empty;
 } bbuffer;
 
@@ -38,16 +40,25 @@ int main(int argc, char **argv) {
 
 
     bbuffer buf;
-    buf.input_files = &argv[5];
-    buf.buff_count = 0;
-
-    sem_init(&buf.new_input_file, 0, 1);
+    buf.ifiles = &argv[5];
+    buf.ifiles_length = argc - 4;
+    buf.curr_ifile = 0;
     
+    buf.curr_bcount = 0;
+    sem_init(&buf.sem_ifile, 0, 1);
+    
+    pthread_t req_thread[req_num];
+    for (int i = 0; i < req_num; i++) {
+        if (pthread_create(&req_thread[i], NULL, requester, &buf) != 0) {
+            printf("failed to create the %d'th thread", i);
+        }
+    }
 
-
-
-
-    requester(&buf);
+    for (int i = 0; i < req_num; i++) {
+        if (pthread_join(req_thread[i], NULL) != 0) {
+            printf("failed to join thread %d", i);
+        }
+    }
 
     return 0;
 }
@@ -55,28 +66,46 @@ int main(int argc, char **argv) {
 
 void* requester(bbuffer *buf) {
 
-   
-    
-    printf("%s\n", buf->input_files[0]);
-    FILE* input_file = fopen(buf->input_files[0], "r");
-    if (input_file == NULL) {
-        perror("Unable to open the file.\n");
-        exit(1);
+    int ifiles_serviced = 0;
+    int got_file = 0;
+
+    while (1) {
+        
+        char curr_input_ips[MAX_INPUT_FILES][MAX_NAME_LENGTH];
+
+        /* wait on other resolver threads before grabbing new input file */
+        sem_wait(&buf->sem_ifile); 
+        FILE* input_file = fopen(buf->ifiles[buf->curr_ifile], "r");
+        
+        if (input_file == NULL) {
+            printf("Unable to open the file: %s\n", buf->ifiles[buf->curr_ifile]);
+            exit(1);
+        } 
+        else {
+            
+            printf("Thread %d grabbed the file: %s\n", buf->ifiles[buf->curr_ifile]);
+            buf->curr_ifile++;
+            ifiles_serviced++;
+            got_file = 1;
+            
+            int i = 0;
+            while (fgets(curr_input_ips[i], MAX_NAME_LENGTH, input_file)) {
+                printf("%s", curr_input_ips[i]);
+                i++;
+            }
+        }
+
+        sem_post(&buf->sem_ifile);
+
+
+
+        
+        
+
+        if (buf->curr_ifile == buf->ifiles_length) break;
     }
 
-
-    char curr_input_ips[MAX_INPUT_FILES][MAX_NAME_LENGTH];
-    int i = 0;
-    while (fgets(curr_input_ips[i], MAX_NAME_LENGTH, input_file)) {
-        printf("%s", curr_input_ips[i]);
-        i++;
-    }
-
-
-
-
-
-    
+    printf("thread %s serviced %d files", ifiles_serviced);
     return NULL;
 }
 
