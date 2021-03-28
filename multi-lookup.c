@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <semaphore.h>
 
+
 typedef struct {
     char** buffer;
     char** ifiles;
@@ -20,16 +21,18 @@ typedef struct {
     pthread_mutex_t buff_mux;
     pthread_mutex_t ifile_mux;
     sem_t empty;
-    sem_t full;
+    sem_t data;
 
     char* req_log;
     char* res_log;
 } bbuffer;
 
 
+
 int check_args(int argc, int req_n, int res_n, char* req_log, char* res_log);
 void* requester(void *buf);
 void* resolver(void *buf);
+
 
 
 int main(int argc, char **argv) {
@@ -55,7 +58,7 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&buf->buff_mux, NULL);
     pthread_mutex_init(&buf->ifile_mux, NULL);
     sem_init(&buf->empty, 0, ARRAY_SIZE);
-    sem_init(&buf->full, 0, 0);
+    sem_init(&buf->data, 0, 0);
 
     buf->req_log = req_log;
     buf->res_log = res_log;
@@ -66,12 +69,12 @@ int main(int argc, char **argv) {
     for (int i = 0; i < (req_num + res_num); i++) {
         if (i < req_num) {
             if (pthread_create(&req_thread[i], NULL, requester, buf) != 0) printf("failed to create the %d'th requester thread\n", i);
-            // else printf("created requester thread %lu\n", pthread_self());
+            else printf("created requester thread %lu\n", pthread_self());
         } 
         else {
             printf("res");
             if (pthread_create(&res_thread[i], NULL, resolver, buf) != 0) printf("failed to create the %d'th resolver thread\n", i);
-            // else printf("created resolver thread %lu\n", pthread_self());
+            else printf("created resolver thread %lu\n", pthread_self());
         }
     }
 
@@ -86,11 +89,13 @@ int main(int argc, char **argv) {
 
     pthread_mutex_destroy(&buf->buff_mux);
     pthread_mutex_destroy(&buf->ifile_mux);
-    sem_destroy(&buf->full);
+    sem_destroy(&buf->data);
     sem_destroy(&buf->empty);
     free(buf);
+
     return 0;
 }
+
 
 
 void* requester(void *buf) {
@@ -111,7 +116,7 @@ void* requester(void *buf) {
             pthread_mutex_unlock(&buff->ifile_mux);
             return NULL;
         } else {
-            int servicing_file = buff->curr_ifile;
+            servicing_file = buff->curr_ifile;
             buff->curr_ifile++;
             printf("thread %lu grabbing file %s\n", pthread_self(), buff->ifiles[servicing_file]); /* debug */
             printf("curr ifile: %d, ifile length: %d\n", buff->curr_ifile, buff->ifiles_length);
@@ -140,7 +145,7 @@ void* requester(void *buf) {
             printf("buff->next_in = %d\n", buff->in);
 
             pthread_mutex_lock(&buff->buff_mux);
-            sem_post(&buff->full);
+            sem_post(&buff->data);
         }
 
         FILE* serviced_file = fopen(buff->req_log, "a+");
@@ -150,14 +155,15 @@ void* requester(void *buf) {
 }
 
 
+
 void* resolver(void *buf) {
 
-    int ifiles_resolved = 0;
+    // int ifiles_resolved = 0;
     bbuffer* buff = buf;
 
     while (1) {
 
-        sem_wait(&buff->full);
+        sem_wait(&buff->data);
         pthread_mutex_lock(&buff->buff_mux);
         
         char* ip_addr = buff->buffer[buff->out];
@@ -170,8 +176,6 @@ void* resolver(void *buf) {
 
     return NULL;
 }
-
-
 
 
 
