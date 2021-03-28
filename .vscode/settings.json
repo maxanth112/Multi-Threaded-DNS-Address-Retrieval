@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "*.py": "python",
+        "stdlib.h": "c",
+        "multi-lookup.h": "c",
+        "ctype.h": "c",
+        "errno.h": "c"
+    }
+}
