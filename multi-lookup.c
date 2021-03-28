@@ -99,27 +99,26 @@ void* requester(void *buf) {
 
     while (1) {
         
-        printf("current file : %d\n total file : %d\n", buff->curr_ifile, buff->ifiles_length);
+        printf("current file : %d\n total file : %d\n", buff->curr_ifile, buff->ifiles_length); /* debug */
         char curr_ips[MAX_INPUT_FILES][MAX_NAME_LENGTH]; /* fix later */
         int ip_index = 0;
 
         /* wait on other resolver threads before grabbing new input file */
         sem_wait(&buff->sem_ifile); 
-
         if (buff->curr_ifile == buff->ifiles_length) {
-            sem_post(&buff->sem_ifile);
             break;
         }
+        int servicing_file = buff->curr_ifile;
+        buff->curr_ifile++;
+        sem_post(&buff->sem_ifile);
 
-        FILE* input_file = fopen(buff->ifiles[buff->curr_ifile], "r");
+        FILE* input_file = fopen(buff->ifiles[servicing_file], "r");
         if (input_file == NULL) {
-            printf("Unable to open the file: %s\n", buff->ifiles[buff->curr_ifile]);
+            printf("Unable to open the file: %s\n", buff->ifiles[servicing_file]);
             exit(1);
         } 
         else {
-            
-            printf("Thread %lu grabbed the file: %s\n", pthread_self(), buff->ifiles[buff->curr_ifile]);
-            buff->curr_ifile++;
+            printf("Thread %lu grabbed the file: %s\n", pthread_self(), buff->ifiles[servicing_file]);
             ifiles_serviced++;
             
             while (fgets(curr_ips[ip_index], MAX_NAME_LENGTH, input_file)) {
@@ -128,15 +127,10 @@ void* requester(void *buf) {
             }
         }
 
-        sem_post(&buff->sem_ifile);
-
-
-
         /* wait on other requester and resolver threads before inserting new ip address to buffer */
-        for (int i = 0; i < ip_index; i++) {
-            
+        for (int i = 0; i < ip_index; i++) {            
             sem_wait(&buff->sem_req_mux);
-
+            
 
 
 
