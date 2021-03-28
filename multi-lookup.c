@@ -14,12 +14,14 @@ typedef struct {
     int curr_ifile;
     int ifiles_length;
     
-    int next_ip_address;
-    int curr_bcount;
+    int next_in;
+    int next_out;
 
     sem_t sem_ifile;
-    sem_t sem_req_mux;
-    sem_t sem_res_mux;
+
+    sem_t req_mux;
+    sem_t res_mux;
+    sem_t read_block;
 
     char* req_log;
     char* res_log;
@@ -47,11 +49,14 @@ int main(int argc, char **argv) {
     buf->ifiles = &argv[5];
     buf->ifiles_length = argc - 5;
     buf->curr_ifile = 0;
-    buf->curr_bcount = 0;
 
+    buf->next_in = 0;
+    buf->next_out = 1;
+    
     sem_init(&buf->sem_ifile, 0, 1);
-    sem_init(&buf->sem_req_mux, 0, 1);
-    sem_init(&buf->sem_res_mux, 0, 1);
+    sem_init(&buf->req_mux, 0, 1);
+    sem_init(&buf->res_mux, 0, 1);
+    sem_init(&buf->read_block, 0, 1);
 
     buf->req_log = req_log;
     buf->res_log = res_log;
@@ -59,34 +64,32 @@ int main(int argc, char **argv) {
     pthread_t req_thread[req_num];
     pthread_t res_thread[res_num];
     
-    for (int i = 0; i < req_num; i++) {
-        if (pthread_create(&req_thread[i], NULL, requester, buf) != 0) {
-            printf("failed to create the %d'th requester thread\n", i);
-        }
-    }
-    for (int i = 0; i < res_num; i++) {
-        if (pthread_create(&res_thread[i], NULL, resolver, buf) != 0) {
-            printf("failed to create the %d'th resolver thread\n", i);
-        }
-    }
-
-
-
-    for (int i = 0; i < req_num; i++) {
-        if (pthread_join(req_thread[i], NULL) != 0) {
-            printf("failed to join requester thread %d\n", i);
-        }
-    }
-    for (int i = 0; i < res_num; i++) {
-        if (pthread_join(res_thread[i], NULL) != 0) {
-            printf("failed to join resolver thread %d\n", i);
+    for (int i = 0; i < (req_num + res_num); i++) {
+        if (i < req_num) {
+            if (pthread_create(&req_thread[i], NULL, requester, buf) != 0) printf("failed to create the %d'th requester thread\n", i);
+            // else printf("created requester thread %lu\n", pthread_self());
+        } 
+        else {
+            printf("res");
+            if (pthread_create(&res_thread[i], NULL, resolver, buf) != 0) printf("failed to create the %d'th resolver thread\n", i);
+            // else printf("created resolver thread %lu\n", pthread_self());
         }
     }
 
+    for (int i = 0; i < (req_num + res_num); i++) {
+        if (i < req_num) {
+            if (pthread_join(req_thread[i], NULL) != 0) printf("failed to join requester thread %d\n", i);
+        }
+        else {
+            if (pthread_join(res_thread[i], NULL) != 0) printf("failed to join resolver thread %d\n", i);
+        }
+    }
 
     sem_destroy(&buf->sem_ifile);
-    sem_destroy(&buf->sem_req_mux);
-    sem_destroy(&buf->sem_res_mux);
+    sem_destroy(&buf->req_mux);
+    sem_destroy(&buf->res_mux);
+    sem_destroy(&buf->read_block);
+
     free(buf);
     return 0;
 }
@@ -99,51 +102,92 @@ void* requester(void *buf) {
 
     while (1) {
         
-        printf("current file : %d\n total file : %d\n", buff->curr_ifile, buff->ifiles_length); /* debug */
         char curr_ips[MAX_INPUT_FILES][MAX_NAME_LENGTH]; /* fix later */
         int ip_index = 0;
 
         /* wait on other resolver threads before grabbing new input file */
         sem_wait(&buff->sem_ifile); 
-        if (buff->curr_ifile == buff->ifiles_length) {
-            break;
-        }
+
+
         int servicing_file = buff->curr_ifile;
-        buff->curr_ifile++;
-        sem_post(&buff->sem_ifile);
+
+        if (buff->curr_ifile == buff->ifiles_length) {
+            printf("thread %lu serviced %d files\n", pthread_self(), ifiles_serviced);
+            sem_post(&buff->sem_ifile);
+            return NULL;
+        } 
+        else {
+            buff->curr_ifile++;
+            printf("thread %lu grabbing file %s\n", pthread_self(), buff->ifiles[servicing_file]); /* debug */
+            printf("curr ifile: %d, ifile length: %d\n", buff->curr_ifile, buff->ifiles_length);
+            sem_post(&buff->sem_ifile);
+        }
+
+
 
         FILE* input_file = fopen(buff->ifiles[servicing_file], "r");
         if (input_file == NULL) {
             printf("Unable to open the file: %s\n", buff->ifiles[servicing_file]);
-            exit(1);
         } 
         else {
-            printf("Thread %lu grabbed the file: %s\n", pthread_self(), buff->ifiles[servicing_file]);
             ifiles_serviced++;
             
             while (fgets(curr_ips[ip_index], MAX_NAME_LENGTH, input_file)) {
-                printf("%s", curr_ips[ip_index]);
+                printf("curr_ips[%d] = %s", ip_index, curr_ips[ip_index]);
                 ip_index++;
             }
         }
 
         /* wait on other requester and resolver threads before inserting new ip address to buffer */
-        for (int i = 0; i < ip_index; i++) {            
-            sem_wait(&buff->sem_req_mux);
-            
+        for (int i = 0; i < ip_index - 1; i++) {            
+            sem_wait(&buff->read_block);
+            sem_wait(&buff->req_mux);
 
+            printf("i = %d", i);
+            buff->buffer[buff->next_in] = curr_ips[i];
+    
+            printf("buff->next_in = %d\n", buff->next_in);
 
-
-            sem_post(&buff->sem_req_mux);
+            sem_post(&buff->req_mux);
+            sem_post(&buff->read_block);
         }
+        printf("made it");
+        FILE* serviced_file = fopen(buff->req_log, "a+");
+        fprintf(serviced_file, "%s", buff->ifiles[servicing_file]);
     }
-    printf("thread %lu serviced %d files\n", pthread_self(), ifiles_serviced);
-    return NULL;
 }
 
 
 void* resolver(void *buf) {
 
+    int ifiles_resolved = 0;
+    bbuffer* buff = buf;
+
+    while (1) {
+
+        sem_wait(&buff->read_block);
+        sem_wait(&buff->res_mux);
+        
+        char* ip_addr = buff->buffer[buff->next_out];
+        buff->next_in++;
+        buff->next_in %= ARRAY_SIZE;
+        
+        if (buff->next_in == 1) {
+            sem_wait(&buff->req_mux);
+        }
+        printf("thread %lu took the address %s", pthread_self(), ip_addr);
+
+        sem_post(&buff->res_mux);
+        sem_post(&buff->read_block);
+
+        sem_wait(&buff->res_mux);
+        buff->next_in--;
+        if (buff->next_in == 0) {
+            sem_post(&buff->req_mux);
+        }
+        sem_post(&buff->res_mux);
+
+    }
 
     return NULL;
 }
