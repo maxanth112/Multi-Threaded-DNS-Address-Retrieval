@@ -14,14 +14,13 @@ typedef struct {
     int curr_ifile;
     int ifiles_length;
     
-    int next_in;
-    int next_out;
+    int in;
+    int out;
 
-    sem_t sem_ifile;
-
-    sem_t req_mux;
-    sem_t res_mux;
-    sem_t read_block;
+    pthread_mutex_t buff_mux;
+    pthread_mutex_t ifile_mux;
+    sem_t empty;
+    sem_t full;
 
     char* req_log;
     char* res_log;
@@ -50,13 +49,13 @@ int main(int argc, char **argv) {
     buf->ifiles_length = argc - 5;
     buf->curr_ifile = 0;
 
-    buf->next_in = 0;
-    buf->next_out = 1;
+    buf->in = 0;
+    buf->out = 0;
     
-    sem_init(&buf->sem_ifile, 0, 1);
-    sem_init(&buf->req_mux, 0, 1);
-    sem_init(&buf->res_mux, 0, 1);
-    sem_init(&buf->read_block, 0, 1);
+    pthread_mutex_init(&buf->buff_mux, NULL);
+    pthread_mutex_init(&buf->ifile_mux, NULL);
+    sem_init(&buf->empty, 0, ARRAY_SIZE);
+    sem_init(&buf->full, 0, 0);
 
     buf->req_log = req_log;
     buf->res_log = res_log;
@@ -85,11 +84,10 @@ int main(int argc, char **argv) {
         }
     }
 
-    sem_destroy(&buf->sem_ifile);
-    sem_destroy(&buf->req_mux);
-    sem_destroy(&buf->res_mux);
-    sem_destroy(&buf->read_block);
-
+    pthread_mutex_destroy(&buf->buff_mux);
+    pthread_mutex_destroy(&buf->ifile_mux);
+    sem_destroy(&buf->full);
+    sem_destroy(&buf->empty);
     free(buf);
     return 0;
 }
@@ -104,56 +102,50 @@ void* requester(void *buf) {
         
         char curr_ips[MAX_INPUT_FILES][MAX_NAME_LENGTH]; /* fix later */
         int ip_index = 0;
+        int servicing_file;
 
         /* wait on other resolver threads before grabbing new input file */
-        sem_wait(&buff->sem_ifile); 
-
-
-        int servicing_file = buff->curr_ifile;
-
+        pthread_mutex_lock(&buff->ifile_mux);
         if (buff->curr_ifile == buff->ifiles_length) {
             printf("thread %lu serviced %d files\n", pthread_self(), ifiles_serviced);
-            sem_post(&buff->sem_ifile);
+            pthread_mutex_unlock(&buff->ifile_mux);
             return NULL;
-        } 
-        else {
+        } else {
+            int servicing_file = buff->curr_ifile;
             buff->curr_ifile++;
             printf("thread %lu grabbing file %s\n", pthread_self(), buff->ifiles[servicing_file]); /* debug */
             printf("curr ifile: %d, ifile length: %d\n", buff->curr_ifile, buff->ifiles_length);
-            sem_post(&buff->sem_ifile);
+            pthread_mutex_unlock(&buff->ifile_mux);
         }
 
-
-
         FILE* input_file = fopen(buff->ifiles[servicing_file], "r");
-        if (input_file == NULL) {
-            printf("Unable to open the file: %s\n", buff->ifiles[servicing_file]);
-        } 
+        if (input_file == NULL) printf("Unable to open the file: %s\n", buff->ifiles[servicing_file]);
         else {
             ifiles_serviced++;
-            
             while (fgets(curr_ips[ip_index], MAX_NAME_LENGTH, input_file)) {
                 printf("curr_ips[%d] = %s", ip_index, curr_ips[ip_index]);
                 ip_index++;
             }
         }
+        fclose(input_file);
 
         /* wait on other requester and resolver threads before inserting new ip address to buffer */
         for (int i = 0; i < ip_index - 1; i++) {            
-            sem_wait(&buff->read_block);
-            sem_wait(&buff->req_mux);
+            sem_wait(&buff->empty);
+            pthread_mutex_lock(&buff->buff_mux);
 
-            printf("i = %d", i);
-            buff->buffer[buff->next_in] = curr_ips[i];
-    
-            printf("buff->next_in = %d\n", buff->next_in);
+            printf("inserting %dth ip address into buffer\n", i);
+            buff->buffer[buff->in] = curr_ips[i];
+            buff->in = (buff->in + 1) % ARRAY_SIZE;
+            printf("buff->next_in = %d\n", buff->in);
 
-            sem_post(&buff->req_mux);
-            sem_post(&buff->read_block);
+            pthread_mutex_lock(&buff->buff_mux);
+            sem_post(&buff->full);
         }
-        printf("made it");
+
         FILE* serviced_file = fopen(buff->req_log, "a+");
         fprintf(serviced_file, "%s", buff->ifiles[servicing_file]);
+        fclose(serviced_file);
     }
 }
 
@@ -165,28 +157,15 @@ void* resolver(void *buf) {
 
     while (1) {
 
-        sem_wait(&buff->read_block);
-        sem_wait(&buff->res_mux);
+        sem_wait(&buff->full);
+        pthread_mutex_lock(&buff->buff_mux);
         
-        char* ip_addr = buff->buffer[buff->next_out];
-        buff->next_in++;
-        buff->next_in %= ARRAY_SIZE;
-        
-        if (buff->next_in == 1) {
-            sem_wait(&buff->req_mux);
-        }
+        char* ip_addr = buff->buffer[buff->out];
+        buff->out = (buff->out + 1) % ARRAY_SIZE;
         printf("thread %lu took the address %s", pthread_self(), ip_addr);
 
-        sem_post(&buff->res_mux);
-        sem_post(&buff->read_block);
-
-        sem_wait(&buff->res_mux);
-        buff->next_in--;
-        if (buff->next_in == 0) {
-            sem_post(&buff->req_mux);
-        }
-        sem_post(&buff->res_mux);
-
+        pthread_mutex_unlock(&buff->buff_mux);
+        sem_post(&buff->empty);
     }
 
     return NULL;
