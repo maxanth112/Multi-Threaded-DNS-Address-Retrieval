@@ -46,6 +46,8 @@ int main(int argc, char **argv) {
     strcpy(buf->res_log, res_log);
     pthread_mutex_init(&buf->buf_mux, NULL);
     pthread_mutex_init(&buf->ifile_mux, NULL);
+    pthread_mutex_init(&buf->req_output_mux, NULL);
+    pthread_mutex_init(&buf->res_output_mux, NULL);
     sem_init(&buf->empty, 0, ARRAY_SIZE);
     sem_init(&buf->data, 0, 0);
     buf->curr_ifile = 0;
@@ -92,6 +94,8 @@ int main(int argc, char **argv) {
     /* destroy and free variables and memory */
     pthread_mutex_destroy(&buf->buf_mux);
     pthread_mutex_destroy(&buf->ifile_mux);
+    pthread_mutex_destroy(&buf->req_output_mux);
+    pthread_mutex_destroy(&buf->res_output_mux);
     sem_destroy(&buf->data);
     sem_destroy(&buf->empty);
     free(buf);
@@ -137,7 +141,9 @@ void* requester(void *buf_ptr) {
                     sem_getvalue(&buf->data, &data_val);
 
                     if (data_val == 0) {
+                        pthread_mutex_lock(&buf->buf_mux);
                         buf->exit = 1;
+                        pthread_mutex_unlock(&buf->buf_mux);
                         sem_post(&buf->data);
                         break;
                     }
@@ -173,7 +179,14 @@ void* requester(void *buf_ptr) {
                 strcpy(buf->bufer[buf->in], curr_ips[i]);
                 buf->in = (buf->in + 1) % ARRAY_SIZE;
 
-                /* append ip address to the log file after its inserted into the buffer */
+                /* ### CS END : Buffer IP Address Insertion ### */
+                pthread_mutex_unlock(&buf->buf_mux);
+                sem_post(&buf->data);
+
+
+                pthread_mutex_lock(&buf->req_output_mux);                
+                /* ### CS START : Append IP Address to Log File ### */
+
                 FILE* output_file = fopen(buf->req_log, "a");
                 if (output_file == NULL) {
                     fprintf(stderr, "Unable to open the output serviced file log.\n");
@@ -181,10 +194,10 @@ void* requester(void *buf_ptr) {
                 }
                 fprintf(output_file, "%s", curr_ips[i]);
                 fclose(output_file);
+                
+                /* ### CS END : Append IP Address to Log File ### */
+                pthread_mutex_unlock(&buf->req_output_mux);
 
-                /* ### CS END : Buffer IP Address Insertion ### */
-                pthread_mutex_unlock(&buf->buf_mux);
-                sem_post(&buf->data);
             }
         }
         fclose(input_file);
@@ -202,43 +215,49 @@ void* resolver(void *buf_ptr) {
 
     while (1) {
        
+        char ip_addr[MAX_NAME_LENGTH];
+
         sem_wait(&buf->data);
-        pthread_mutex_lock(&buf->buf_mux);
+        pthread_mutex_lock(&buf->buf_mux); 
         /* ### CS START : Buffer IP Address Consumption ### */
         
         if (buf->exit == 1) {
-            sem_post(&buf->data);
             printf("thread %d resolved %d hostnames\n", tid, resolved_count);
 
             /* ### CS END(1) : Buffer IP Address Consumption ### */
             pthread_mutex_unlock(&buf->buf_mux);
+            sem_post(&buf->data);
             return NULL;
         }
 
         /* get ip address and strip the newline/whitespace chars */
-        char ip_addr[MAX_NAME_LENGTH];
         strcpy(ip_addr, buf->bufer[buf->out]);
-        ip_addr[strcspn(ip_addr, "\n")] = 0;
-
         buf->out = (buf->out + 1) % ARRAY_SIZE;
+        
+        /* ### CS END(2) : Buffer IP Address Consumption ### */
+        pthread_mutex_unlock(&buf->buf_mux);
+        sem_post(&buf->empty);
+
+        ip_addr[strcspn(ip_addr, "\n")] = 0;
 
         char dns_addr[MAX_IP_LENGTH];
         int lookup_status = dnslookup(ip_addr, dns_addr, MAX_NAME_LENGTH);
 
         if (lookup_status == UTIL_SUCCESS) {
-            resolved_count++;
 
+            resolved_count++;
+            pthread_mutex_lock(&buf->res_output_mux);
+            /* ### CS START : Append DNS Address to Log File ### */
+            
             FILE* output_file = fopen(buf->res_log, "a+");
             fprintf(output_file, "%s\n", dns_addr);
             fclose(output_file);
-        } else {
-            buf->lookup_errors++;
+            
+            /* ### CS END : Append DNS Address to Log File ### */
+            pthread_mutex_unlock(&buf->res_output_mux);  
+        } else {            
             fprintf(stderr, "Error looking up address %s.\n", ip_addr);
         }
-        
-        /* ### CS END(2) : Buffer IP Address Consumption ### */
-        pthread_mutex_unlock(&buf->buf_mux);
-        sem_post(&buf->empty);
     }
     return NULL;
 }

@@ -40,6 +40,8 @@ typedef struct {
 
     pthread_mutex_t buf_mux;
     pthread_mutex_t ifile_mux;
+    pthread_mutex_t req_output_mux;
+    pthread_mutex_t res_output_mux;
     sem_t empty;
     sem_t data;
 } bbuffer;
