@@ -34,32 +34,14 @@ int main(int argc, char **argv) {
     fclose(fopen(res_log, "w"));
 
     /* allocate buffer struct memory and init all buffer variables */
-    bbuffer* buf = (bbuffer*) malloc(sizeof(bbuffer));
-    if (buf == NULL) {
-        fprintf(stderr, "Failed to allocate memory for buf struct with malloc.\n");
-        exit(EXIT_FAILURE);
-    }
+    bbuffer* buf = create_buffer_struct();
+
+    buf->ifile_count = argc - 5;
     for (int i = 5; i < argc; i++) {
         strcpy(buf->ifiles[i - 5], argv[i]);
     }
     strcpy(buf->req_log, req_log);
     strcpy(buf->res_log, res_log);
-    pthread_mutex_init(&buf->buf_mux, NULL);
-    pthread_mutex_init(&buf->ifile_mux, NULL);
-    pthread_mutex_init(&buf->req_output_mux, NULL);
-    pthread_mutex_init(&buf->res_output_mux, NULL);
-    sem_init(&buf->empty, 0, ARRAY_SIZE);
-    sem_init(&buf->data, 0, 0);
-    buf->curr_ifile = 0;
-    buf->lookup_errors = 0;
-    buf->in = 0;
-    buf->out = 0;
-    buf->exit = 0;
-    buf->req_exited = 0;
-    buf->res_exited = 0;
-    buf->req_num = 1;
-    buf->res_num = 1;
-    buf->ifile_count = argc - 5;
 
     /* thread creation */
     pthread_t req_thread[req_num];
@@ -92,20 +74,12 @@ int main(int argc, char **argv) {
     }
 
     /* destroy and free variables and memory */
-    pthread_mutex_destroy(&buf->buf_mux);
-    pthread_mutex_destroy(&buf->ifile_mux);
-    pthread_mutex_destroy(&buf->req_output_mux);
-    pthread_mutex_destroy(&buf->res_output_mux);
-    sem_destroy(&buf->data);
-    sem_destroy(&buf->empty);
-    free(buf);
+    free_buffer_struct(buf);
 
     /* end timer and print total time taken */
     gettimeofday(&end, NULL);
     int seconds = (end.tv_sec - start.tv_sec);
     int micros = ((seconds * 1000000) + end.tv_usec) - (start.tv_usec);
- 
-    if (buf->lookup_errors != 0) fprintf(stderr, "Total lookup errors: %d.\n", buf->lookup_errors);
     printf("./multi-lookup: total time is %d.%d seconds.\n", seconds, micros);
     
     return 0;
@@ -119,6 +93,7 @@ void* requester(void *buf_ptr) {
     /* simplify thread ids for console reading */
     int tid = buf->req_num++;
     int serviced_count = 0;
+    int exit_condition = 0;
 
     while (1) {
         
@@ -130,41 +105,41 @@ void* requester(void *buf_ptr) {
         /* ### CS START : Grabbing New Input File ### */
 
         if (buf->curr_ifile == buf->ifile_count) { 
-            /* no more files to service, thread exits */
-            buf->req_exited++;            
+            /* no more files to service, thread exits and takes one resolver with it*/
+            buf->req_exited++;   
+            exit_condition = 1;   
 
-            if (buf->req_exited == (buf->req_num - 1)) {
-                /* last thread is exiting, alert resolvers when buffer is empty */
+            sem_wait(&buf->empty);
+            pthread_mutex_lock(&buf->buf_mux);
+            /* ### CS START : Poison Pill Insertion ### */
 
-                while (1) {
-                    int data_val;
-                    sem_getvalue(&buf->data, &data_val);
-
-                    if (data_val == 0) {
-                        pthread_mutex_lock(&buf->buf_mux);
-                        buf->exit = 1;
-                        pthread_mutex_unlock(&buf->buf_mux);
-                        sem_post(&buf->data);
-                        break;
-                    }
-                }
-            }
-            printf("thread %d serviced %d files\n", tid, serviced_count);
+            strcpy(buf->bufer[buf->in], POISON_PILL);
+            buf->in = (buf->in + 1) % ARRAY_SIZE;
             
-            /* ### CS END(1) : Grabbing New Input File ### */
-            pthread_mutex_unlock(&buf->ifile_mux);
-            return NULL;
+            pthread_mutex_lock(&buf->stdout_mux);
+            printf("thread %d serviced %d files\n", tid, serviced_count);
+            pthread_mutex_unlock(&buf->stdout_mux);
+
+            /* ### CS END : Poison Pill Insertion ### */
+            pthread_mutex_unlock(&buf->buf_mux);
+            sem_post(&buf->data);      
         } else {
             
             curr_file = buf->curr_ifile;
             buf->curr_ifile++;            
-            /* ### CS END(2) : Grabbing New Input File ### */
-            pthread_mutex_unlock(&buf->ifile_mux);
         }
+        /* ### CS END : Grabbing New Input File ### */
+        pthread_mutex_unlock(&buf->ifile_mux);
+
+        if (exit_condition == 1) return NULL;
 
         /* read in all ip addresses from the current file and put in local memory */
         FILE* input_file = fopen(buf->ifiles[curr_file], "r");
-        if (input_file == NULL) fprintf(stderr, "Unable to open the file: %s, moving to next.\n", buf->ifiles[curr_file]);
+        if (input_file == NULL) {
+            pthread_mutex_lock(&buf->stdout_mux);
+            fprintf(stderr, "Unable to open the file: %s, moving to next.\n", buf->ifiles[curr_file]);
+            pthread_mutex_unlock(&buf->stdout_mux);
+        }
         else {
             serviced_count++;
             /* read all input file ip addresses into local memory before entering critical section */
@@ -172,6 +147,10 @@ void* requester(void *buf_ptr) {
             
             for (int i = 0; i < ip_index; i++) {      
 
+                if (strlen(curr_ips[i]) <= 1) {
+                    /* accounting for gaps between ip addresses */
+                    continue;
+                }
                 sem_wait(&buf->empty);
                 pthread_mutex_lock(&buf->buf_mux);
                 /* ### CS START : Buffer IP Address Insertion ### */
@@ -187,12 +166,17 @@ void* requester(void *buf_ptr) {
                 pthread_mutex_lock(&buf->req_output_mux);                
                 /* ### CS START : Append IP Address to Log File ### */
 
-                FILE* output_file = fopen(buf->req_log, "a");
+                FILE* output_file = fopen(buf->req_log, "a+");
                 if (output_file == NULL) {
                     fprintf(stderr, "Unable to open the output serviced file log.\n");
                     exit(EXIT_FAILURE);
                 }
-                fprintf(output_file, "%s", curr_ips[i]);
+                if (curr_ips[i][strlen(curr_ips[i]) - 1] == '\n') {
+
+                    fprintf(output_file, "%s", curr_ips[i]);
+                } else {
+                    fprintf(output_file, "%s\n", curr_ips[i]);
+                }
                 fclose(output_file);
                 
                 /* ### CS END : Append IP Address to Log File ### */
@@ -212,6 +196,7 @@ void* resolver(void *buf_ptr) {
     /* simplify thread ids for console reading, resolver threads are in 100s */
     int tid = 100*buf->res_num++;
     int resolved_count = 0;
+    int exit_condition = 0;
 
     while (1) {
        
@@ -221,49 +206,55 @@ void* resolver(void *buf_ptr) {
         pthread_mutex_lock(&buf->buf_mux); 
         /* ### CS START : Buffer IP Address Consumption ### */
         
-        if (buf->exit == 1) {
-            printf("thread %d resolved %d hostnames\n", tid, resolved_count);
-
-            /* ### CS END(1) : Buffer IP Address Consumption ### */
-            pthread_mutex_unlock(&buf->buf_mux);
-            sem_post(&buf->data);
-            return NULL;
-        }
-
         /* get ip address and strip the newline/whitespace chars */
         strcpy(ip_addr, buf->bufer[buf->out]);
         buf->out = (buf->out + 1) % ARRAY_SIZE;
         
-        /* ### CS END(2) : Buffer IP Address Consumption ### */
+        /* exit condition for when requester threads have no more inputs */
+        if (strcmp(ip_addr, POISON_PILL) == 0) {
+            pthread_mutex_lock(&buf->stdout_mux);
+            printf("thread %d resolved %d hostnames\n", tid, resolved_count);
+            pthread_mutex_unlock(&buf->stdout_mux);
+            exit_condition = 1;
+        }
+
+        /* ### CS END : Buffer IP Address Consumption ### */
         pthread_mutex_unlock(&buf->buf_mux);
         sem_post(&buf->empty);
 
-        ip_addr[strcspn(ip_addr, "\n")] = 0;
+        if (exit_condition == 1) return NULL;
 
+        resolved_count++;
+        char addr_cpy[MAX_NAME_LENGTH];
+        strcpy(addr_cpy, ip_addr);
+
+        ip_addr[strlen(ip_addr) - 1] = 0;        
         char dns_addr[MAX_IP_LENGTH];
         int lookup_status = dnslookup(ip_addr, dns_addr, MAX_NAME_LENGTH);
 
-        if (lookup_status == UTIL_SUCCESS) {
+        pthread_mutex_lock(&buf->res_output_mux);
+        /* ### CS START : Append DNS Address to Log File ### */
+        
+        FILE* output_file = fopen(buf->res_log, "a+");
 
-            resolved_count++;
-            pthread_mutex_lock(&buf->res_output_mux);
-            /* ### CS START : Append DNS Address to Log File ### */
-            
-            FILE* output_file = fopen(buf->res_log, "a+");
-            fprintf(output_file, "%s\n", dns_addr);
-            fclose(output_file);
-            
-            /* ### CS END : Append DNS Address to Log File ### */
-            pthread_mutex_unlock(&buf->res_output_mux);  
-        } else {            
-            fprintf(stderr, "Error looking up address %s.\n", ip_addr);
+        if (lookup_status == UTIL_SUCCESS) { 
+            fprintf(output_file, "%.*s, %s\n", (int) strlen(addr_cpy) - 1, addr_cpy, dns_addr); 
         }
+        else { 
+            fprintf(output_file, "%s, %s\n", ip_addr, "NOT_RESOLVED"); 
+        }
+        
+        fclose(output_file);
+
+        /* ### CS END : Append DNS Address to Log File ### */
+        pthread_mutex_unlock(&buf->res_output_mux);  
     }
+
     return NULL;
 }
 
 
-
+/* helper functions */
 void check_args(int argc, int req_n, int res_n, char* req_log, char* res_log) {
 
     if (argc <= 5) {
@@ -283,4 +274,51 @@ void check_args(int argc, int req_n, int res_n, char* req_log, char* res_log) {
         fprintf(stderr, "Resolver number must be a positive integer less than or equal to 10, provided %d.\n", res_n);
         exit(EXIT_FAILURE);
     }
+
+    return;
+}
+
+
+bbuffer* create_buffer_struct() {
+
+
+    bbuffer* buf = (bbuffer*) malloc(sizeof(bbuffer));
+    if (buf == NULL) {
+        fprintf(stderr, "Failed to allocate memory for buf struct with malloc.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    pthread_mutex_init(&buf->buf_mux, NULL);
+    pthread_mutex_init(&buf->ifile_mux, NULL);
+    pthread_mutex_init(&buf->req_output_mux, NULL);
+    pthread_mutex_init(&buf->res_output_mux, NULL);
+    pthread_mutex_init(&buf->stdout_mux, NULL);
+    sem_init(&buf->empty, 0, ARRAY_SIZE);
+    sem_init(&buf->data, 0, 0);
+    buf->curr_ifile = 0;
+    buf->lookup_errors = 0;
+    buf->in = 0;
+    buf->out = 0;
+    buf->exit = 0;
+    buf->req_exited = 0;
+    buf->res_exited = 0;
+    buf->req_num = 1;
+    buf->res_num = 1;
+
+    return buf;
+}
+
+
+void free_buffer_struct(bbuffer* buf) {
+
+    pthread_mutex_destroy(&buf->buf_mux);
+    pthread_mutex_destroy(&buf->ifile_mux);
+    pthread_mutex_destroy(&buf->req_output_mux);
+    pthread_mutex_destroy(&buf->res_output_mux);
+    pthread_mutex_destroy(&buf->stdout_mux);
+    sem_destroy(&buf->data);
+    sem_destroy(&buf->empty);
+    free(buf);
+
+    return;
 }

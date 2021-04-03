@@ -17,7 +17,7 @@
 #define MAX_RESOLVER_THREADS 10
 #define MAX_NAME_LENGTH 255
 #define MAX_IP_LENGTH INET6_ADDRSTRLEN
-
+#define POISON_PILL "getoutwhileyoucan"
 
 /* struct to keep all shared memory together */
 typedef struct {
@@ -42,6 +42,7 @@ typedef struct {
     pthread_mutex_t ifile_mux;
     pthread_mutex_t req_output_mux;
     pthread_mutex_t res_output_mux;
+    pthread_mutex_t stdout_mux;
     sem_t empty;
     sem_t data;
 } bbuffer;
@@ -54,6 +55,10 @@ void check_args(int argc,
         char* req_log, 
         char* res_log);
 
+
+/* buffer creation helper function */
+bbuffer* create_buffer_struct();
+void free_buffer_struct(bbuffer* buf);
 
 /* producer & consumer funcitons for the bounded buffer */
 void* resolver(void *buf);
