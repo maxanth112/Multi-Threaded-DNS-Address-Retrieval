@@ -274,6 +274,14 @@ void check_args(int argc, int req_n, int res_n, char* req_log, char* res_log) {
         fprintf(stderr, "Resolver number must be a positive integer less than or equal to 10, provided %d.\n", res_n);
         exit(EXIT_FAILURE);
     }
+    if (!strstr(req_log, ".txt")) {
+        fprintf(stderr, "Requester log file given is not a valid .txt file, please provide a valid file name ending in '.txt'.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (!strstr(res_log, ".txt")) {
+        fprintf(stderr, "Resolver log file given is not a valid .txt file, please provide a valid file name ending in '.txt'.\n");
+        exit(EXIT_FAILURE);
+    }    
 
     return;
 }
