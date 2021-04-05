@@ -3,7 +3,7 @@
 
 CC = gcc
 CFLAGS = -Wextra -Wall -g -std=gnu99
-INCLUDES = 
+INCLUDES =
 LFLAGS = 
 LIBS = -lpthread
 

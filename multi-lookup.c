@@ -1,6 +1,5 @@
 #include "multi-lookup.h"
 #include "util.h"
-#include "util.c"
 
 #include <stdlib.h>
 #include <stdio.h>
