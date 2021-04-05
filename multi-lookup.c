@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <semaphore.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 
 
@@ -32,7 +33,16 @@ int main(int argc, char **argv) {
     
     check_args(req_num, res_num, req_log, res_log);
      
-    /* clear any existing log file contents */
+    /* check the access privelages of the file, make sure we can write it */
+    if (access(req_log, W_OK) != 0) {
+        fprintf(stderr, "Do not have write access to the provided file: %s\n", req_log);
+        exit(1);
+    } 
+    if (access(res_log, W_OK) != 0) {
+        fprintf(stderr, "Do not have write access to the provided file: %s\n", res_log);
+        exit(1);
+    } 
+    /* clear any existing log file contents if we do have access */
     fclose(fopen(req_log, "w"));
     fclose(fopen(res_log, "w"));
 
