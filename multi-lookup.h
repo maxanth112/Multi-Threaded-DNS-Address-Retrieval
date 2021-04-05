@@ -31,7 +31,6 @@ typedef struct {
     int in;
     int out;
 
-    int req_num;
     int res_num;
     int req_exited;
 
@@ -54,7 +53,7 @@ void check_args(int req_n,
         char* res_log);
 
 /* buffer creation helper function */
-bbuffer* create_buffer_struct(int req_num, int res_num);
+bbuffer* create_buffer_struct(int res_num);
 void free_buffer_struct(bbuffer* buf);
 
 /* producer & consumer funcitons for the bounded buffer */

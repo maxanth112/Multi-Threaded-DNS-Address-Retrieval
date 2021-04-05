@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     fclose(fopen(res_log, "w"));
 
     /* allocate buffer struct memory and init all buffer variables */
-    bbuffer* buf = create_buffer_struct(req_num, res_num);
+    bbuffer* buf = create_buffer_struct(res_num);
 
     buf->ifile_count = argc - 5;
     for (int i = 5; i < argc; i++) {
@@ -256,7 +256,6 @@ void* resolver(void *buf_ptr) {
             if (not_sub_one_print == 1) {
                 fprintf(output_file, "%.*s, %s\n", (int) strlen(addr_cpy) - 1, addr_cpy, dns_addr); 
             } else {
-                printf("   >> %s\n", addr_cpy);
                 fprintf(output_file, "%.*s, %s\n", (int) strlen(addr_cpy), addr_cpy, dns_addr); 
             }
         }
@@ -314,7 +313,7 @@ void check_args(int req_n, int res_n, char* req_log, char* res_log) {
 }
 
 
-bbuffer* create_buffer_struct(int req_num, int res_num) {
+bbuffer* create_buffer_struct(int res_num) {
 
 
     bbuffer* buf = (bbuffer*) malloc(sizeof(bbuffer));
@@ -334,7 +333,6 @@ bbuffer* create_buffer_struct(int req_num, int res_num) {
     buf->in = 0;
     buf->out = 0;
     buf->req_exited = 0;
-    buf->req_num = req_num;
     buf->res_num = res_num;
 
     return buf;
