@@ -30,13 +30,10 @@ typedef struct {
     int curr_ifile;
     int in;
     int out;
-    int exit;
 
     int req_num;
     int res_num;
     int req_exited;
-    int res_exited;
-    int lookup_errors;
 
     pthread_mutex_t buf_mux;
     pthread_mutex_t ifile_mux;
@@ -48,22 +45,21 @@ typedef struct {
 } bbuffer;
 
 
-/* error checking function for command line args */
-void check_args(int argc, 
-        int req_n, 
+/* error checking functions for command line args */
+void check_argc(int argc);
+
+void check_args(int req_n, 
         int res_n, 
         char* req_log, 
         char* res_log);
 
-
 /* buffer creation helper function */
-bbuffer* create_buffer_struct();
+bbuffer* create_buffer_struct(int req_num, int res_num);
 void free_buffer_struct(bbuffer* buf);
 
 /* producer & consumer funcitons for the bounded buffer */
 void* resolver(void *buf);
 void* requester(void *buf);
-
 
 #endif
 

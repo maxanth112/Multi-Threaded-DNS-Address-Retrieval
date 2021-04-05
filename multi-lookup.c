@@ -12,7 +12,11 @@
 #include <sys/time.h>
 
 
+
 int main(int argc, char **argv) {
+
+    /* bare minimum argument check */
+    check_argc(argc);
 
     /* start timer */
     struct timeval start, end;
@@ -27,14 +31,14 @@ int main(int argc, char **argv) {
     strcpy(req_log, argv[3]);
     strcpy(res_log, argv[4]);
     
-    check_args(argc, req_num, res_num, req_log, res_log);
+    check_args(req_num, res_num, req_log, res_log);
      
     /* clear any existing log file contents */
     fclose(fopen(req_log, "w"));
     fclose(fopen(res_log, "w"));
 
     /* allocate buffer struct memory and init all buffer variables */
-    bbuffer* buf = create_buffer_struct();
+    bbuffer* buf = create_buffer_struct(req_num, res_num);
 
     buf->ifile_count = argc - 5;
     for (int i = 5; i < argc; i++) {
@@ -90,8 +94,7 @@ void* requester(void *buf_ptr) {
 
     bbuffer* buf = (bbuffer*) buf_ptr;
     
-    /* simplify thread ids for console reading */
-    int tid = buf->req_num++;
+    unsigned long tid = pthread_self();
     int serviced_count = 0;
     int exit_condition = 0;
 
@@ -105,26 +108,33 @@ void* requester(void *buf_ptr) {
         /* ### CS START : Grabbing New Input File ### */
 
         if (buf->curr_ifile == buf->ifile_count) { 
-            /* no more files to service, thread exits and takes one resolver with it*/
+            /* no more files to service, thread exits */
             buf->req_exited++;   
             exit_condition = 1;   
 
-            sem_wait(&buf->empty);
-            pthread_mutex_lock(&buf->buf_mux);
-            /* ### CS START : Poison Pill Insertion ### */
-
-            strcpy(buf->bufer[buf->in], POISON_PILL);
-            buf->in = (buf->in + 1) % ARRAY_SIZE;
-            
             pthread_mutex_lock(&buf->stdout_mux);
-            printf("thread %d serviced %d files\n", tid, serviced_count);
+            printf("thread %lu serviced %d files\n", tid, serviced_count);
             pthread_mutex_unlock(&buf->stdout_mux);
 
-            /* ### CS END : Poison Pill Insertion ### */
-            pthread_mutex_unlock(&buf->buf_mux);
-            sem_post(&buf->data);      
-        } else {
-            
+            /* if last thread to exit, then insert the poison pill for all of the remaining resolver threads to exit */
+            if (buf->req_exited == buf->res_num) {
+
+                for (int i = 0; i < buf->res_num; i++) {
+
+                    sem_wait(&buf->empty);
+                    pthread_mutex_lock(&buf->buf_mux);
+                    /* ### CS START : Poison Pill Insertion ### */
+
+                    strcpy(buf->bufer[buf->in], POISON_PILL);
+                    buf->in = (buf->in + 1) % ARRAY_SIZE;
+                    
+                    /* ### CS END : Poison Pill Insertion ### */
+                    pthread_mutex_unlock(&buf->buf_mux);
+                    sem_post(&buf->data); 
+                }
+            }
+        } else {            
+
             curr_file = buf->curr_ifile;
             buf->curr_ifile++;            
         }
@@ -137,7 +147,7 @@ void* requester(void *buf_ptr) {
         FILE* input_file = fopen(buf->ifiles[curr_file], "r");
         if (input_file == NULL) {
             pthread_mutex_lock(&buf->stdout_mux);
-            fprintf(stderr, "Unable to open the file: %s, moving to next.\n", buf->ifiles[curr_file]);
+            fprintf(stderr, "Invalid file: %s.\n", buf->ifiles[curr_file]);
             pthread_mutex_unlock(&buf->stdout_mux);
         }
         else {
@@ -168,7 +178,9 @@ void* requester(void *buf_ptr) {
 
                 FILE* output_file = fopen(buf->req_log, "a+");
                 if (output_file == NULL) {
+                    pthread_mutex_lock(&buf->stdout_mux);
                     fprintf(stderr, "Unable to open the output serviced file log.\n");
+                    pthread_mutex_unlock(&buf->stdout_mux);
                     exit(EXIT_FAILURE);
                 }
                 if (curr_ips[i][strlen(curr_ips[i]) - 1] == '\n') {
@@ -193,8 +205,7 @@ void* resolver(void *buf_ptr) {
 
     bbuffer* buf = (bbuffer*) buf_ptr;
 
-    /* simplify thread ids for console reading, resolver threads are in 100s */
-    int tid = 100*buf->res_num++;
+    unsigned long tid = pthread_self();
     int resolved_count = 0;
     int exit_condition = 0;
 
@@ -213,7 +224,7 @@ void* resolver(void *buf_ptr) {
         /* exit condition for when requester threads have no more inputs */
         if (strcmp(ip_addr, POISON_PILL) == 0) {
             pthread_mutex_lock(&buf->stdout_mux);
-            printf("thread %d resolved %d hostnames\n", tid, resolved_count);
+            printf("thread %lu resolved %d hostnames\n", tid, resolved_count);
             pthread_mutex_unlock(&buf->stdout_mux);
             exit_condition = 1;
         }
@@ -227,8 +238,12 @@ void* resolver(void *buf_ptr) {
         resolved_count++;
         char addr_cpy[MAX_NAME_LENGTH];
         strcpy(addr_cpy, ip_addr);
+        int not_sub_one_print = 0;
 
-        ip_addr[strlen(ip_addr) - 1] = 0;        
+        if (ip_addr[strlen(ip_addr) - 1] == '\n') {
+            not_sub_one_print = 1;
+            ip_addr[strlen(ip_addr) - 1] = 0;    
+        }    
         char dns_addr[MAX_IP_LENGTH];
         int lookup_status = dnslookup(ip_addr, dns_addr, MAX_NAME_LENGTH);
 
@@ -238,7 +253,12 @@ void* resolver(void *buf_ptr) {
         FILE* output_file = fopen(buf->res_log, "a+");
 
         if (lookup_status == UTIL_SUCCESS) { 
-            fprintf(output_file, "%.*s, %s\n", (int) strlen(addr_cpy) - 1, addr_cpy, dns_addr); 
+            if (not_sub_one_print == 1) {
+                fprintf(output_file, "%.*s, %s\n", (int) strlen(addr_cpy) - 1, addr_cpy, dns_addr); 
+            } else {
+                printf("   >> %s\n", addr_cpy);
+                fprintf(output_file, "%.*s, %s\n", (int) strlen(addr_cpy), addr_cpy, dns_addr); 
+            }
         }
         else { 
             fprintf(output_file, "%s, %s\n", ip_addr, "NOT_RESOLVED"); 
@@ -255,7 +275,7 @@ void* resolver(void *buf_ptr) {
 
 
 /* helper functions */
-void check_args(int argc, int req_n, int res_n, char* req_log, char* res_log) {
+void check_argc(int argc) {
 
     if (argc <= 5) {
         fprintf(stderr, "Need a minimum of 6 total arguments passed, only received %d.\n", argc);
@@ -266,6 +286,13 @@ void check_args(int argc, int req_n, int res_n, char* req_log, char* res_log) {
         fprintf(stderr, "Maximum input files accepted is 100, received %d.\n", ifile_num);
         exit(EXIT_FAILURE);
     }
+
+    return;
+}
+
+
+void check_args(int req_n, int res_n, char* req_log, char* res_log) {
+
     if (req_n <= 0 || req_n > 10) {
         fprintf(stderr, "Requester number must be a positive integer less than or equal to 10, provided %d.\n", req_n);
         exit(EXIT_FAILURE);
@@ -287,7 +314,7 @@ void check_args(int argc, int req_n, int res_n, char* req_log, char* res_log) {
 }
 
 
-bbuffer* create_buffer_struct() {
+bbuffer* create_buffer_struct(int req_num, int res_num) {
 
 
     bbuffer* buf = (bbuffer*) malloc(sizeof(bbuffer));
@@ -304,14 +331,11 @@ bbuffer* create_buffer_struct() {
     sem_init(&buf->empty, 0, ARRAY_SIZE);
     sem_init(&buf->data, 0, 0);
     buf->curr_ifile = 0;
-    buf->lookup_errors = 0;
     buf->in = 0;
     buf->out = 0;
-    buf->exit = 0;
     buf->req_exited = 0;
-    buf->res_exited = 0;
-    buf->req_num = 1;
-    buf->res_num = 1;
+    buf->req_num = req_num;
+    buf->res_num = res_num;
 
     return buf;
 }
