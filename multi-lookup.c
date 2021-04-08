@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
     fclose(fopen(res_log, "w"));
 
     /* allocate buffer struct memory and init all buffer variables */
-    bbuffer* buf = create_buffer_struct(res_num);
+    bbuffer* buf = create_buffer_struct(res_num, req_num);
 
     buf->ifile_count = argc - 5;
     for (int i = 5; i < argc; i++) {
@@ -126,7 +126,7 @@ void* requester(void *buf_ptr) {
             pthread_mutex_unlock(&buf->stdout_mux);
 
             /* if last thread to exit, then insert the poison pill for all of the remaining resolver threads to exit */
-            if (buf->req_exited == buf->res_num) {
+            if (buf->req_exited == buf->req_num) {
 
                 for (int i = 0; i < buf->res_num; i++) {
 
@@ -322,7 +322,7 @@ void check_args(int req_n, int res_n, char* req_log, char* res_log) {
 }
 
 
-bbuffer* create_buffer_struct(int res_num) {
+bbuffer* create_buffer_struct(int res_num, int req_num) {
 
 
     bbuffer* buf = (bbuffer*) malloc(sizeof(bbuffer));
@@ -343,6 +343,7 @@ bbuffer* create_buffer_struct(int res_num) {
     buf->out = 0;
     buf->req_exited = 0;
     buf->res_num = res_num;
+    buf->req_num = req_num;
 
     return buf;
 }

@@ -32,6 +32,7 @@ typedef struct {
     int out;
 
     int res_num;
+    int req_num;
     int req_exited;
 
     pthread_mutex_t buf_mux;
@@ -53,7 +54,7 @@ void check_args(int req_n,
         char* res_log);
 
 /* buffer creation helper function */
-bbuffer* create_buffer_struct(int res_num);
+bbuffer* create_buffer_struct(int res_num, int req_num);
 void free_buffer_struct(bbuffer* buf);
 
 /* producer & consumer funcitons for the bounded buffer */
